@@ -1,20 +1,24 @@
 import re
 from datetime import datetime
+from pathlib import Path, WindowsPath
 from typing import Any, Type, Callable, Optional, List, Tuple, Dict, Iterable
 import warnings
 
 from ask.utils.datetime_format import explain_datetime_format
+from ask.utils.paths import trim_path
+from ask.utils.predicates import is_valid_url, join
 
 
 class Question:
     def __init__(self, name: str, type: Type, prompt: str, default: Any = None, required: bool = False,
-                 predicate: Optional[Callable[[Any], bool]] = None):
+                 predicate: Optional[Callable[[Any], bool]] = None, warn_on_type_mismatch=True):
         self.name = name
         self.type = type
         self.prompt = prompt
         self.default = default
         self.required = required
         self.predicate = predicate
+        self.warn_on_type_mismatch = warn_on_type_mismatch
 
     def make_type_prompt(self) -> str:
         return '(' + self.type.__name__ + ')'
@@ -28,7 +32,7 @@ class Question:
     def __str__(self):
         ans = f'{self.prompt} {self.make_type_prompt()}'
 
-        if self.default:
+        if self.default is not None:
             ans += f' [default: {self.format_default()}]'
 
         if self.required:
@@ -56,7 +60,7 @@ class Question:
                 try:
                     ans = self.process_input(inpt)
 
-                    if (self.type is not Any) and (type(ans) is not self.type):
+                    if (self.type is not Any) and (type(ans) is not self.type) and self.warn_on_type_mismatch:
                         warnings.warn(f'Warning: your process_input() returns a different type from'
                                       f' the type you specified for {self.__repr__()}. Is this intentional?')
 
@@ -108,7 +112,13 @@ class BoolQuestion(Question):
             raise ValueError("Expected answer 'yes'/'y' or 'no'/'n'")
 
     def make_type_prompt(self):
-        return 'y/n'
+        return '(y/n)'
+
+    def format_default(self) -> str:
+        if self.default:
+            return 'y'
+        else:
+            return 'n'
 
 
 class DateTimeQuestion(Question):
@@ -228,3 +238,22 @@ class MultiChoiceQuestion(ChoiceQuestion):
             return '\nPlease, choose some of the following options, separated by ",":\n' + ''.join(opts) + 'Option'
         else:
             return '(' + ', '.join(opts) + ')'
+
+
+class PathQuestion(Question):
+    def __init__(self, name: str, prompt: str, default: Optional[Path] = None, required: bool = False,
+                 predicate: Optional[Callable[[float], bool]] = None):
+        super().__init__(name, Path, prompt, default, required, predicate, False)
+
+    def process_input(self, inpt):
+        return Path(inpt).expanduser().resolve()
+
+    def format_default(self) -> str:
+        return trim_path(self.default, 3)
+
+
+class UrlQuestion(Question):
+    def __init__(self, name: str, prompt: str, default: Optional[str] = None, required: bool = False,
+                 predicate: Optional[Callable[[float], bool]] = None):
+
+        super().__init__(name, str, prompt, default, required, join(predicate, is_valid_url))
